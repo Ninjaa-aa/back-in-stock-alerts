@@ -1,0 +1,28 @@
+name: Challenge checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  test-and-container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm test
+      - name: Build Docker image
+        run: docker build -t restock .
+      - name: Check container startup and form
+        run: |
+          docker run -d --name restock -e STOCK_API_URL=https://example.invalid/api/stock -e STOCK_API_KEY=test -e RESEND_API_KEY=test -e RESEND_BASE_URL=https://example.invalid -e WEBHOOK_SECRET=ci-test-secret restock
+          for attempt in 1 2 3 4 5; do
+            if docker exec restock node -e "fetch('http://127.0.0.1:3000/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"; then break; fi
+            sleep 1
+          done
+          docker exec restock node -e "Promise.all(['/healthz','/embed'].map(async p=>{const r=await fetch('http://127.0.0.1:3000'+p);if(!r.ok)throw Error(p)})).catch(e=>{console.error(e);process.exit(1)})"
+      - if: always()
+        run: docker logs restock || true
